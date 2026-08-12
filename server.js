@@ -139,7 +139,7 @@ app.get('/api/test', (req, res) => {
         message: 'Server berjalan dengan baik',
         timestamp: new Date().toISOString(),
         socketConnected: true,
-        aiModel: process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
+        aiModel: process.env.OLLAMA_MODEL || 'llama3.2:3b'
     });
 });
 
@@ -170,8 +170,8 @@ server.listen(PORT, () => {
     console.log(`========================================`);
     console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
     console.log(`🔌 Socket.IO server listening on port ${PORT}`);
-    console.log(`🤖 GROQ API Key: ${process.env.GROQ_API_KEY ? '✅ Tersedia' : '❌ Tidak tersedia'}`);
-    console.log(`📦 Model: ${process.env.GROQ_MODEL || 'llama-3.1-8b-instant'}`);
+    console.log(`🤖 Ollama: ${process.env.OLLAMA_URL || 'http://127.0.0.1:11434/api/chat'}`);
+    console.log(`📦 Model: ${process.env.OLLAMA_MODEL || 'llama3.2:3b'}`);
     console.log(`========================================`);
     console.log(`🎯 AI Chatbot dibatasi pada 6 kategori konseling:`);
     console.log(`   1. Akademik   2. Sosial   3. Pribadi`);
