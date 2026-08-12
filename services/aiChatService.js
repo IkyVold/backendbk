@@ -1,14 +1,23 @@
 // services/aiChatService.js
 // AI chatbot menggunakan Ollama lokal di VPS
+// Jawaban chatbot HANYA berdasarkan informasi yang diberikan Guru BK.
 
 const axios = require('axios');
 const informasiModel = require('../models/informasiModel');
 const HttpError = require('../utils/HttpError');
 const { sanitizeMessages } = require('../utils/sanitize');
 
+const OUT_OF_SCOPE_MESSAGE =
+    'Maaf, saya belum memiliki informasi yang sesuai untuk pertanyaan tersebut. ' +
+    'Silakan tanyakan hal yang berkaitan dengan informasi sekolah atau konseling yang telah diberikan oleh Guru BK.';
+
 async function chatWithAI(messages) {
+
+    // =============================================================
+    // VALIDASI PESAN
+    // =============================================================
+
     if (!messages || !Array.isArray(messages)) {
-        // Bentuk error sama seperti response lama
         const err = new HttpError(400, 'Format pesan tidak valid');
 
         err.payload = {
@@ -23,106 +32,157 @@ async function chatWithAI(messages) {
     console.log('📨 Chat request received');
 
     // =============================================================
-    // AMBIL PESAN TERAKHIR USER
+    // AMBIL PESAN USER TERAKHIR
     // =============================================================
 
     const lastUserMessage = messages
         .filter(m => m.role === 'user')
         .pop();
 
-    if (lastUserMessage) {
-        // Isi pesan sengaja tidak dicetak untuk menjaga privasi
-        console.log('📝 Chat request diterima (isi disembunyikan)');
+    if (!lastUserMessage || !lastUserMessage.content) {
+        const err = new HttpError(400, 'Pesan tidak boleh kosong');
+
+        err.payload = {
+            error: {
+                message: 'Pesan tidak boleh kosong'
+            }
+        };
+
+        throw err;
     }
 
+    const question = String(lastUserMessage.content).trim();
+
+    console.log('📝 Pertanyaan diterima (isi disembunyikan)');
+
     // =============================================================
-    // AMBIL KNOWLEDGE BASE FAQ DARI GURU BK
+    // AMBIL SEMUA INFORMASI DARI GURU BK
     // =============================================================
 
-    let referensiText = '(Belum ada informasi tambahan dari Guru BK)';
+    let infoRows = [];
 
     try {
-        const infoRows = await informasiModel.listForChatbot();
 
-        if (infoRows.length > 0) {
-            referensiText = infoRows
-                .map(
-                    r =>
-                        `### ${r.judul} (${r.kategori})\n${r.isi}`
-                )
-                .join('\n\n');
-        }
+        infoRows = await informasiModel.listForChatbot();
+
     } catch (e) {
-        console.warn(
-            'Gagal ambil informasi_bk untuk konteks chatbot:',
+
+        console.error(
+            '❌ Gagal mengambil informasi_bk:',
             e.message
         );
+
+        const err = new HttpError(
+            500,
+            'Gagal mengambil informasi dari Guru BK'
+        );
+
+        err.payload = {
+            error: {
+                message: 'Gagal mengambil informasi dari Guru BK'
+            }
+        };
+
+        throw err;
     }
+
+    // =============================================================
+    // JIKA BELUM ADA INFORMASI DARI GURU BK
+    // =============================================================
+
+    if (!infoRows || infoRows.length === 0) {
+
+        console.log('⚠️ Belum ada informasi Guru BK');
+
+        return {
+            reply: OUT_OF_SCOPE_MESSAGE,
+            success: true
+        };
+    }
+
+    // =============================================================
+    // BUAT REFERENSI FAQ
+    // =============================================================
+
+    const referensiText = infoRows
+        .map(
+            r =>
+                `### ${r.judul} (${r.kategori})\n${r.isi}`
+        )
+        .join('\n\n');
 
     // =============================================================
     // SYSTEM PROMPT
+    //
+    // PENTING:
+    // MODEL DILARANG MENGGUNAKAN PENGETAHUAN UMUMNYA.
+    // SEMUA JAWABAN HARUS BERASAL DARI REFERENSI.
     // =============================================================
 
     const counselingSystemPrompt = {
         role: 'system',
 
-        content: `Anda adalah konselor BK profesional untuk siswa SMP/SMA.
+        content: `
+Anda adalah chatbot informasi dan konseling sekolah.
 
-BATASAN KETAT - HANYA 6 KATEGORI KONSELING SEKOLAH INI:
+SUMBER INFORMASI ANDA HANYA:
+Informasi yang diberikan oleh Guru BK pada bagian REFERENSI di bawah.
 
-1. AKADEMIK - Kesulitan belajar, ujian, nilai, tugas, PR, motivasi belajar, konsentrasi, cara belajar efektif
-2. SOSIAL - Pertemanan, pergaulan, konflik dengan teman, rasa dikucilkan, cara berbaur
-3. PRIBADI - Stres, cemas, kepercayaan diri rendah, emosi, perasaan, overthinking, kegelisahan
-4. KARIR - Cita-cita, pilihan jurusan SMA/SMK, rencana kuliah/kerja, bakat dan minat
-5. BULLYING - Perundungan, dihina, dijauhi, intimidasi, cyberbullying, cara melaporkan
-6. KELUARGA - Masalah dengan orang tua/saudara, kondisi rumah, broken home, komunikasi keluarga
+ATURAN PALING PENTING:
 
-ATURAN YANG HARUS DIPATUHI:
+1. Anda DILARANG menggunakan pengetahuan umum dari model AI.
+2. Anda DILARANG menjawab berdasarkan pengetahuan yang Anda miliki di luar REFERENSI.
+3. Anda DILARANG mengarang informasi.
+4. Anda DILARANG menambahkan fakta, nama, tanggal, angka, syarat, link, alamat, atau informasi lain yang tidak terdapat dalam REFERENSI.
+5. Jika jawaban atas pertanyaan siswa TIDAK terdapat atau TIDAK dapat disimpulkan secara langsung dari REFERENSI, JANGAN menjawab berdasarkan pengetahuan umum.
+6. Jika informasi tidak tersedia, jawab persis dengan:
 
-- Jika pertanyaan di LUAR 6 kategori di atas DAN di luar topik FAQ referensi di bawah, jawab dengan tegas:
-"Maaf, saya adalah asisten konseling BK. Saya hanya bisa membantu terkait Akademik, Sosial, Pribadi, Karir, Bullying, Keluarga, atau info seputar sekolah/beasiswa/pendaftaran PT. Ada masalah yang ingin kamu ceritakan?"
+"Maaf, saya belum memiliki informasi yang sesuai untuk pertanyaan tersebut. Silakan tanyakan hal yang berkaitan dengan informasi sekolah atau konseling yang telah diberikan oleh Guru BK."
 
-- JANGAN pernah menjawab pertanyaan tentang: Matematika, Fisika, Kimia, Biologi, Sejarah, Geografi, Coding, Programming, Game, Film, Musik, Olahraga, atau pengetahuan umum lainnya.
+7. Gunakan bahasa Indonesia yang sederhana, sopan, dan mudah dipahami siswa.
+8. Jangan menyebutkan bahwa Anda menggunakan model AI.
+9. Jangan membahas topik di luar informasi yang diberikan Guru BK.
+10. Jika pertanyaan hanya basa-basi seperti "halo", "hai", atau "selamat pagi", boleh membalas secara singkat dan mengarahkan siswa untuk menanyakan informasi yang tersedia.
+11. Jika pertanyaan berkaitan dengan konseling tetapi REFERENSI tidak memberikan informasi yang cukup, gunakan jawaban penolakan yang telah ditentukan.
+12. Jangan mengambil informasi dari percakapan sebelumnya jika informasi tersebut tidak terdapat dalam REFERENSI.
 
-- Gunakan bahasa yang hangat, lembut, empatik, dan mendukung seperti konselor profesional.
+==================================================
+REFERENSI INFORMASI DARI GURU BK
+==================================================
 
-- Panggil siswa dengan "kamu" atau "adik" jika terkesan lebih muda.
-
-- Jangan memberikan diagnosis medis seperti depresi, gangguan kecemasan, atau diagnosis lainnya. Cukup beri dukungan psikologis sederhana.
-
-- Jika siswa menunjukkan tanda-tanda bahaya atau ingin menyakiti diri, segera sarankan untuk menemui guru BK atau orang dewasa terpercaya.
-
-- Panjang jawaban: 2-4 kalimat yang padat dan membantu.
-
-- Berikan solusi praktis yang bisa dilakukan siswa.
-
-FAQ / INFORMASI SEKOLAH-KARIR (dikelola Guru BK):
-
-Selain 6 kategori konseling di atas, Anda BOLEH menjawab pertanyaan seputar beasiswa, pendaftaran perguruan tinggi, jalur masuk (SNBP/SNBT/mandiri), bimbingan karir, dan info sekolah — TAPI HANYA berdasarkan referensi di bawah ini.
-
-JANGAN mengarang detail seperti tanggal, syarat, kuota, atau link yang tidak ada di referensi.
-
-Jika pertanyaan relevan tetapi informasinya tidak ada di referensi, jawab:
-"Maaf, saya belum punya info spesifik soal itu. Coba tanya langsung ke Guru BK ya."
-
---- REFERENSI ---
 ${referensiText}
---- AKHIR REFERENSI ---
+
+==================================================
+AKHIR REFERENSI
+==================================================
+
+SEBELUM MENJAWAB:
+
+Periksa terlebih dahulu apakah pertanyaan siswa dapat dijawab menggunakan REFERENSI.
+
+Jika YA:
+- Jawab hanya berdasarkan REFERENSI.
+- Jangan menambahkan informasi dari pengetahuan umum.
+
+Jika TIDAK:
+- Jangan menjawab pertanyaan tersebut.
+- Gunakan jawaban penolakan yang telah ditentukan.
 
 Ingat:
-Anda BUKAN guru mata pelajaran.
-Anda adalah KONSELOR BK.
-
-Fokus pada membantu siswa mengatasi masalah pribadi dan sosial mereka, serta memberikan informasi sekolah/karir berdasarkan referensi yang tersedia.`
+REFERENSI adalah satu-satunya sumber kebenaran.
+`
     };
 
     // =============================================================
-    // SANITASI PESAN UNTUK PRIVASI
+    // SANITASI PESAN
     // =============================================================
 
     const safeMessages = sanitizeMessages(messages);
 
-    // Gabungkan system prompt dengan history chat
+    // =============================================================
+    // HISTORY TIDAK BOLEH MENGALAHKAN SYSTEM PROMPT
+    // =============================================================
+
     const finalMessages = [
         counselingSystemPrompt,
         ...safeMessages
@@ -141,25 +201,22 @@ Fokus pada membantu siswa mengatasi masalah pribadi dan sosial mereka, serta mem
         'llama3.2:3b';
 
     try {
-        console.log(`🤖 Menggunakan Ollama: ${ollamaModel}`);
+
+        console.log(
+            `🤖 Menggunakan Ollama: ${ollamaModel}`
+        );
 
         const response = await axios.post(
             ollamaUrl,
             {
                 model: ollamaModel,
 
-                // Format messages sama dengan system prompt + history
                 messages: finalMessages,
 
-                // Jangan streaming karena backend membutuhkan
-                // satu response lengkap
                 stream: false,
 
                 options: {
-                    temperature: 0.7,
-
-                    // 2-4 kalimat sesuai system prompt.
-                    // Lebih kecil juga membuat CPU VPS lebih ringan.
+                    temperature: 0.1,
                     num_predict: 256
                 }
             },
@@ -168,21 +225,24 @@ Fokus pada membantu siswa mengatasi masalah pribadi dan sosial mereka, serta mem
                     'Content-Type': 'application/json'
                 },
 
-                // VPS CPU-only bisa membutuhkan waktu cukup lama
-                // ketika model pertama kali dimuat.
                 timeout: 120000
             }
         );
 
         // =========================================================
-        // AMBIL HASIL DARI OLLAMA
+        // AMBIL RESPONSE
         // =========================================================
 
-        const reply =
-            response.data?.message?.content ||
-            'Maaf, saya tidak dapat memproses permintaan Anda saat ini.';
+        let reply =
+            response.data?.message?.content?.trim();
 
-        console.log('✅ Chat response dari Ollama dikirim');
+        if (!reply) {
+            reply = OUT_OF_SCOPE_MESSAGE;
+        }
+
+        console.log(
+            '✅ Chat response dari Ollama dikirim'
+        );
 
         return {
             reply,
@@ -190,39 +250,41 @@ Fokus pada membantu siswa mengatasi masalah pribadi dan sosial mereka, serta mem
         };
 
     } catch (error) {
+
         console.error(
             '❌ OLLAMA API Error:',
             error.response?.data || error.message
         );
 
-        // =========================================================
-        // ERROR MESSAGE UNTUK USER
-        // =========================================================
-
         let errorMessage =
             'Maaf, terjadi kesalahan pada server. Silakan coba lagi nanti.';
 
         if (error.code === 'ECONNABORTED') {
+
             errorMessage =
                 'Maaf, koneksi ke layanan AI timeout. Silakan coba lagi.';
         }
 
         if (error.code === 'ECONNREFUSED') {
+
             errorMessage =
                 'Maaf, layanan AI sedang tidak tersedia.';
         }
 
         if (error.response?.status === 404) {
+
             errorMessage =
                 'Maaf, model AI tidak ditemukan di server.';
         }
 
         if (error.response?.status >= 500) {
+
             errorMessage =
                 'Maaf, layanan AI sedang mengalami gangguan.';
         }
 
-        const status = error.response?.status || 500;
+        const status =
+            error.response?.status || 500;
 
         const err = new HttpError(
             status,
