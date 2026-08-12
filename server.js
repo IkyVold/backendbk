@@ -44,7 +44,8 @@ const io = socketIo(server, {
             'http://localhost:5173',
             'http://127.0.0.1:5173',
             'http://157.10.161.170:5000',
-            'http://157.10.161.170:8080'
+            'http://157.10.161.170:8080',
+            'http://smandarussholahkonseling.my.id'
         ],
         credentials: true,
         methods: ['GET', 'POST']
