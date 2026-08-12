@@ -10,6 +10,14 @@ const COOKIE_MAX_MS = 12 * 60 * 60 * 1000;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
+// Domain bersama untuk cookie lintas-subdomain, mis. ".smandarussholahkonseling.my.id"
+// (harus diawali titik) agar cookie yang di-set oleh api.domain bisa dibaca/dipakai
+// oleh frontend di domain (tanpa "api."). Tanpa ini, cookie non-HttpOnly seperti
+// csrf_token jadi host-only dan tidak kebaca oleh document.cookie di subdomain lain
+// -> header X-CSRF-Token tidak pernah terkirim -> selalu 403 "CSRF token tidak valid".
+// Kosongkan (jangan diisi) kalau frontend & backend memang satu host yang sama persis.
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+
 function cookieBaseOptions() {
   return {
     httpOnly: true,
@@ -17,6 +25,7 @@ function cookieBaseOptions() {
     sameSite: IS_PROD ? 'none' : 'lax', // cross-site prod butuh None+Secure
     path: '/',
     maxAge: COOKIE_MAX_MS,
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   };
 }
 
@@ -40,6 +49,7 @@ function setAuthCookie(res, token, role) {
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
     path: '/',
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   };
   ['siswa', 'guru', 'kepsek', 'admin'].forEach((r) => {
     if (r !== role) res.clearCookie(authCookieName(r), clearOpts);
@@ -52,6 +62,7 @@ function setAuthCookie(res, token, role) {
     sameSite: IS_PROD ? 'none' : 'lax',
     path: '/',
     maxAge: COOKIE_MAX_MS,
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   });
 }
 
@@ -69,6 +80,7 @@ function clearAuthCookie(res, role) {
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
     path: '/',
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   });
 }
 
@@ -81,6 +93,7 @@ function setCsrfCookie(res) {
     sameSite: IS_PROD ? 'none' : 'lax',
     path: '/',
     maxAge: COOKIE_MAX_MS,
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   });
   return token;
 }
@@ -88,6 +101,7 @@ function setCsrfCookie(res) {
 function clearCsrfCookie(res) {
   res.clearCookie('csrf_token', {
     httpOnly: false,
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
     secure: IS_PROD,
     sameSite: IS_PROD ? 'none' : 'lax',
     path: '/',
